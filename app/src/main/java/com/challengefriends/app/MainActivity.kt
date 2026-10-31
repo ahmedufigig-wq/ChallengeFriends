@@ -207,6 +207,7 @@ class MainActivity : Activity() {
         val p = newPage("❓ تحدي الأسئلة")
         p.addView(text("السؤال ${questionIndex+1} من ${questions.size}   •   النقاط: $score", 15f, gold, true))
         p.addView(text("الوقت: $seconds", 15f, cream, false).apply { tag = "timer"; setPadding(0, dp(12), 0, dp(12)) })
+        p.addView(text("نتائج اللاعبين المتصلين: " + lanResults.joinToString(" • "), 12f, gold, false).apply { tag="network_results"; setPadding(0,dp(8),0,dp(8)) })
         p.addView(text(q.first, 21f, cream, true).apply { setPadding(0, dp(18), 0, dp(18)) })
         q.second.forEachIndexed { i, answer ->
             addButton(p, answer, false) {
