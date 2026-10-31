@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private val lanClients = CopyOnWriteArrayList<Socket>()
     private val lanNames = CopyOnWriteArrayList<String>()
     private val lanWriters = CopyOnWriteArrayList<PrintWriter>()
+    private val lanResults = CopyOnWriteArrayList<String>()
+    private var lanClientWriter: PrintWriter? = null
     private val networkPool = Executors.newCachedThreadPool()
     @Volatile private var networkActive = false
     private var memoryFirst = -1
@@ -209,7 +211,14 @@ class MainActivity : Activity() {
         q.second.forEachIndexed { i, answer ->
             addButton(p, answer, false) {
                 stopTimer()
-                if (i == q.third) score += 10
+                val correct = i == q.third
+                if (correct) score += 10
+                if (networkActive) {
+                    lanResults.add(playerName + ": " + (if (correct) "صحيح" else "خطأ") + " (سؤال " + (questionIndex+1) + ")")
+                    broadcastResults()
+                } else {
+                    lanClientWriter?.println("ANSWER|" + playerName + "|" + (questionIndex+1) + "|" + correct)
+                }
                 questionIndex++; seconds = 20; showQuestion()
             }
         }
@@ -370,9 +379,16 @@ class MainActivity : Activity() {
                         try {
                             val reader=BufferedReader(InputStreamReader(socket.getInputStream(),"UTF-8"))
                             val writer=PrintWriter(socket.getOutputStream(),true)
+                    lanClientWriter=writer
                             val name=reader.readLine()?.take(24)?.ifBlank { "لاعب" } ?: "لاعب"
                             lanNames.add(name); lanWriters.add(writer); broadcastRoster()
-                            while(networkActive && reader.readLine()!=null) { }
+                            while(networkActive) {
+                                val incoming = reader.readLine() ?: break
+                                if (incoming.startsWith("ANSWER|")) {
+                                    lanResults.add(incoming.substringAfter("|"))
+                                    broadcastResults()
+                                }
+                            }
                         } catch (_:Exception) { } finally {
                             lanClients.remove(socket); try { socket.close() } catch (_:Exception) { }; broadcastRoster()
                         }
@@ -426,7 +442,10 @@ class MainActivity : Activity() {
                     }
                     while(!socket.isClosed) {
                         val line=reader.readLine() ?: break
-                        if(line.startsWith("GAME|")) {
+                        if(line.startsWith("SCORE|")) {
+                            val resultText = line.substringAfter("|").replace("~", "\\n")
+                            runOnUiThread { page?.findViewWithTag<TextView>("network_results")?.text="نتائج اللاعبين المتصلين:\\n" + resultText }
+                        } else if(line.startsWith("GAME|")) {
                             runOnUiThread {
                                 when(line.substringAfter("|")) {
                                     "quiz" -> startQuiz()
@@ -447,10 +466,15 @@ class MainActivity : Activity() {
     private fun broadcastGame(game: String) {
         lanWriters.forEach { try { it.println("GAME|" + game) } catch (_:Exception) { } }
     }
+    private fun broadcastResults() {
+        val line = "SCORE|" + lanResults.joinToString("~")
+        lanWriters.forEach { try { it.println(line) } catch (_:Exception) { } }
+        runOnUiThread { page?.findViewWithTag<TextView>("network_results")?.text="نتائج اللاعبين المتصلين:\\n" + lanResults.joinToString("\\n") }
+    }
     private fun closeNetwork() {
         networkActive=false; try { lanServer?.close() } catch (_:Exception) { }; lanServer=null
         lanClients.forEach { try { it.close() } catch (_:Exception) { } }
-        lanClients.clear(); lanNames.clear(); lanWriters.clear()
+        lanClients.clear(); lanNames.clear(); lanWriters.clear(); lanResults.clear(); lanClientWriter=null
     }
 
     private fun startTimer(tick: () -> Unit) {
