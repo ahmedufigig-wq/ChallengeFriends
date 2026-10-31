@@ -348,6 +348,10 @@ class MainActivity : Activity() {
         p.addView(text("عنوان الهاتف: " + localIpAddress(),20f,gold,true).apply { setPadding(0,dp(18),0,dp(18)) })
         p.addView(text("المنفذ: 45454 • الحد الأقصى: 12 لاعبًا",14f,cream,false))
         p.addView(text("بانتظار اللاعبين...",16f,gold,true).apply { tag="roster"; setPadding(0,dp(24),0,dp(20)) })
+        p.addView(text("المستضيف يستطيع بدء اللعبة على الأجهزة المتصلة:",14f,cream,false).apply { setPadding(0,dp(18),0,dp(8)) })
+        addButton(p,"بدء تحدي الأسئلة للجميع",true){broadcastGame("quiz");startQuiz()}
+        addButton(p,"بدء من أنا؟ للجميع",false){broadcastGame("who");startWhoAmI()}
+        addButton(p,"بدء صح أم خطأ للجميع",false){broadcastGame("truefalse");startTrueFalse()}
         addButton(p,"إيقاف الغرفة",false){closeNetwork();showHome()}
         networkPool.execute {
             try {
@@ -414,7 +418,17 @@ class MainActivity : Activity() {
                     }
                     while(!socket.isClosed) {
                         val line=reader.readLine() ?: break
-                        runOnUiThread { page?.findViewWithTag<TextView>("client_roster")?.text="اللاعبون في الغرفة:\\n" + line }
+                        if(line.startsWith("GAME|")) {
+                            runOnUiThread {
+                                when(line.substringAfter("|")) {
+                                    "quiz" -> startQuiz()
+                                    "who" -> startWhoAmI()
+                                    "truefalse" -> startTrueFalse()
+                                }
+                            }
+                        } else {
+                            runOnUiThread { page?.findViewWithTag<TextView>("client_roster")?.text="اللاعبون في الغرفة:\\n" + line }
+                        }
                     }
                 } catch (_:Exception) { runOnUiThread { status.text="فشل الاتصال. تحقق من الشبكة وعنوان IP." } }
             }
@@ -422,6 +436,9 @@ class MainActivity : Activity() {
         addButton(p,"رجوع",false){showNetworkInfo()}
     }
 
+    private fun broadcastGame(game: String) {
+        lanWriters.forEach { try { it.println("GAME|" + game) } catch (_:Exception) { } }
+    }
     private fun closeNetwork() {
         networkActive=false; try { lanServer?.close() } catch (_:Exception) { }; lanServer=null
         lanClients.forEach { try { it.close() } catch (_:Exception) { } }
