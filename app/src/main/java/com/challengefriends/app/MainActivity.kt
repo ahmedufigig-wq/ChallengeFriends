@@ -13,6 +13,15 @@ import android.view.ViewGroup
 import android.widget.*
 import android.content.Context
 import kotlin.random.Random
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.NetworkInterface
+import java.net.Inet4Address
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.PrintWriter
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private val black = Color.rgb(9, 9, 9)
@@ -29,6 +38,12 @@ class MainActivity : Activity() {
     private var puzzle = mutableListOf(1,2,3,4,5,6,7,8,0)
     private var questionIndex = 0
     private var clueIndex = 0
+    private var lanServer: ServerSocket? = null
+    private val lanClients = CopyOnWriteArrayList<Socket>()
+    private val lanNames = CopyOnWriteArrayList<String>()
+    private val lanWriters = CopyOnWriteArrayList<PrintWriter>()
+    private val networkPool = Executors.newCachedThreadPool()
+    @Volatile private var networkActive = false
     private var memoryFirst = -1
     private var memoryLocked = false
     private var memoryMatched = mutableSetOf<Int>()
@@ -60,6 +75,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         stopTimer()
+        closeNetwork()
+        networkPool.shutdownNow()
         super.onDestroy()
     }
 
@@ -317,9 +334,98 @@ class MainActivity : Activity() {
         addButton(p,"رجوع",true){showHome()}
     }
     private fun showNetworkInfo() {
-        val p=newPage("🌐 اللعب الجماعي")
-        p.addView(text("الاتصال الجماعي عبر نقطة اتصال Wi-Fi يحتاج إعداد وضع المستضيف واللاعبين ومزامنة اللعب. هذه الوظيفة لم تُفعّل في هذه النسخة بعد.",16f,cream,false))
-        addButton(p,"رجوع",true){showHome()}
+        val p=newPage("🌐 غرفة اللعب المحلية")
+        p.addView(text("فعّل نقطة اتصال Wi-Fi في هاتف المستضيف، ثم صِل بقية الهواتف بها.",15f,cream,false))
+        addButton(p,"إنشاء غرفة (المستضيف)",true){startHosting()}
+        addButton(p,"الانضمام إلى غرفة",false){showJoinRoom()}
+        addButton(p,"رجوع",false){showHome()}
+    }
+
+    private fun startHosting() {
+        closeNetwork(); networkActive=true
+        val p=newPage("أنت مستضيف الغرفة")
+        p.addView(text("فعّل نقطة اتصال Wi-Fi وأرسل عنوان IP إلى أصدقائك.",14f,cream,false))
+        p.addView(text("عنوان الهاتف: " + localIpAddress(),20f,gold,true).apply { setPadding(0,dp(18),0,dp(18)) })
+        p.addView(text("المنفذ: 45454 • الحد الأقصى: 12 لاعبًا",14f,cream,false))
+        p.addView(text("بانتظار اللاعبين...",16f,gold,true).apply { tag="roster"; setPadding(0,dp(24),0,dp(20)) })
+        addButton(p,"إيقاف الغرفة",false){closeNetwork();showHome()}
+        networkPool.execute {
+            try {
+                val server=ServerSocket(45454); lanServer=server
+                while(networkActive && lanClients.size<12) {
+                    val socket=server.accept(); lanClients.add(socket)
+                    networkPool.execute {
+                        try {
+                            val reader=BufferedReader(InputStreamReader(socket.getInputStream(),"UTF-8"))
+                            val writer=PrintWriter(socket.getOutputStream(),true)
+                            val name=reader.readLine()?.take(24)?.ifBlank { "لاعب" } ?: "لاعب"
+                            lanNames.add(name); lanWriters.add(writer); broadcastRoster()
+                            while(networkActive && reader.readLine()!=null) { }
+                        } catch (_:Exception) { } finally {
+                            lanClients.remove(socket); try { socket.close() } catch (_:Exception) { }; broadcastRoster()
+                        }
+                    }
+                }
+            } catch (e:Exception) { runOnUiThread { Toast.makeText(this,"تعذر فتح الغرفة: " + e.message,Toast.LENGTH_LONG).show() } }
+        }
+    }
+
+    private fun broadcastRoster() {
+        val message=(listOf(playerName)+lanNames.toList()).joinToString("،")
+        lanWriters.forEach { try { it.println(message) } catch (_:Exception) { } }
+        runOnUiThread { page?.findViewWithTag<TextView>("roster")?.text="اللاعبون المتصلون: " + (lanNames.size+1) + " من 12\\n" + playerName + " (المستضيف)\\n" + lanNames.joinToString("\\n").ifBlank { "بانتظار الأصدقاء..." } }
+    }
+
+    private fun localIpAddress(): String {
+        try {
+            val interfaces=NetworkInterface.getNetworkInterfaces()
+            while(interfaces.hasMoreElements()) {
+                val addresses=interfaces.nextElement().inetAddresses
+                while(addresses.hasMoreElements()) {
+                    val address=addresses.nextElement()
+                    if(!address.isLoopbackAddress && address is Inet4Address) return address.hostAddress ?: "192.168.43.1"
+                }
+            }
+        } catch (_:Exception) { }
+        return "192.168.43.1"
+    }
+
+    private fun showJoinRoom() {
+        val p=newPage("الانضمام إلى غرفة")
+        val ipField=EditText(this).apply { hint="عنوان IP للمستضيف"; setTextColor(cream); setHintTextColor(Color.GRAY); gravity=Gravity.CENTER }
+        p.addView(ipField,LinearLayout.LayoutParams(-1,dp(55)))
+        val status=text("أدخل عنوان IP بعد الاتصال بنقطة اتصال المستضيف.",14f,cream,false)
+        p.addView(status.apply { tag="join_status"; setPadding(0,dp(18),0,dp(18)) })
+        addButton(p,"اتصال",true) {
+            val host=ipField.text.toString().trim()
+            if(host.isBlank()) { status.text="أدخل عنوان IP أولًا"; return@addButton }
+            status.text="جارٍ الاتصال..."
+            networkPool.execute {
+                try {
+                    val socket=Socket(host,45454)
+                    val writer=PrintWriter(socket.getOutputStream(),true)
+                    val reader=BufferedReader(InputStreamReader(socket.getInputStream(),"UTF-8"))
+                    writer.println(playerName)
+                    runOnUiThread {
+                        val room=newPage("متصل بالغرفة")
+                        room.addView(text("تم الاتصال بالمستضيف. قائمة اللاعبين:",15f,cream,false))
+                        room.addView(text("بانتظار القائمة...",16f,gold,true).apply { tag="client_roster"; setPadding(0,dp(24),0,dp(24)) })
+                        addButton(room,"قطع الاتصال",false) { try { socket.close() } catch (_:Exception) { }; showHome() }
+                    }
+                    while(!socket.isClosed) {
+                        val line=reader.readLine() ?: break
+                        runOnUiThread { page?.findViewWithTag<TextView>("client_roster")?.text="اللاعبون في الغرفة:\\n" + line }
+                    }
+                } catch (_:Exception) { runOnUiThread { status.text="فشل الاتصال. تحقق من الشبكة وعنوان IP." } }
+            }
+        }
+        addButton(p,"رجوع",false){showNetworkInfo()}
+    }
+
+    private fun closeNetwork() {
+        networkActive=false; try { lanServer?.close() } catch (_:Exception) { }; lanServer=null
+        lanClients.forEach { try { it.close() } catch (_:Exception) { } }
+        lanClients.clear(); lanNames.clear(); lanWriters.clear()
     }
 
     private fun startTimer(tick: () -> Unit) {
