@@ -45,6 +45,7 @@ class MainActivity : Activity() {
     private val networkPool = Executors.newCachedThreadPool()
     @Volatile private var networkActive = false
     private var memoryFirst = -1
+    private var memorySecond = -1
     private var memoryLocked = false
     private var memoryMatched = mutableSetOf<Int>()
     private val questions = listOf(
@@ -170,7 +171,7 @@ class MainActivity : Activity() {
         val grid = GridLayout(this).apply { columnCount = 3; rowCount = 3; alignmentMode = GridLayout.ALIGN_BOUNDS }
         puzzle.forEachIndexed { index, value ->
             val b = Button(this).apply {
-                text = if (value == 0) "" else value.toString()
+                text = if (value == 0) "" else listOf("🍎","🚗","🌙","⭐","🐱","⚽","🌸","🏠")[value-1]
                 textSize = 25f; isAllCaps = false
                 setTextColor(if (value == 0) black else gold)
                 background = rounded(if (value == 0) black else panel, gold, 2)
@@ -235,7 +236,7 @@ class MainActivity : Activity() {
     }
 
     private fun startMemory() {
-        stopTimer(); score=0; memoryFirst=-1; memoryLocked=false; memoryMatched.clear()
+        stopTimer(); score=0; memoryFirst=-1; memorySecond=-1; memoryLocked=false; memoryMatched.clear()
         val values = (listOf("🍎","🚗","⭐","🐱","⚽","🌙") + listOf("🍎","🚗","⭐","🐱","⚽","🌙")).shuffled().toMutableList()
         showMemory(values)
     }
@@ -245,15 +246,22 @@ class MainActivity : Activity() {
         val grid = GridLayout(this).apply { columnCount=3 }
         values.forEachIndexed { i, v ->
             val b = Button(this).apply {
-                text = if (i in memoryMatched || i == memoryFirst) v else "؟"
+                text = if (i in memoryMatched || i == memoryFirst || i == memorySecond) v else "؟"
                 textSize=24f; isAllCaps=false; setTextColor(gold); background=rounded(panel,gold,1)
                 isEnabled = i !in memoryMatched && !memoryLocked
                 setOnClickListener {
                     if (memoryFirst == -1) { memoryFirst=i; showMemory(values) }
                     else if (memoryFirst != i) {
                         val first=memoryFirst
-                        if (values[first] == values[i]) { memoryMatched.add(first); memoryMatched.add(i); score+=10; memoryFirst=-1; if(memoryMatched.size==12){saveScore(score);showResult("رائع! وجدت كل الأزواج",score)}else showMemory(values) }
-                        else { memoryLocked=true; showMemory(values); handler.postDelayed({ memoryFirst=-1; memoryLocked=false; showMemory(values) }, 850) }
+                        memorySecond=i
+                        if (values[first] == values[i]) {
+                            memoryMatched.add(first); memoryMatched.add(i); score+=10
+                            memoryFirst=-1; memorySecond=-1
+                            if(memoryMatched.size==12){saveScore(score);showResult("رائع! وجدت كل الأزواج",score)}else showMemory(values)
+                        } else {
+                            memoryLocked=true; showMemory(values)
+                            handler.postDelayed({ memoryFirst=-1; memorySecond=-1; memoryLocked=false; showMemory(values) }, 850)
+                        }
                     }
                 }
             }
@@ -356,7 +364,7 @@ class MainActivity : Activity() {
         networkPool.execute {
             try {
                 val server=ServerSocket(45454); lanServer=server
-                while(networkActive && lanClients.size<12) {
+                while(networkActive && lanClients.size<11) {
                     val socket=server.accept(); lanClients.add(socket)
                     networkPool.execute {
                         try {
