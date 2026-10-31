@@ -433,13 +433,14 @@ class MainActivity : Activity() {
                 try {
                     val socket=Socket(host,45454)
                     val writer=PrintWriter(socket.getOutputStream(),true)
+                    lanClientWriter = writer
                     val reader=BufferedReader(InputStreamReader(socket.getInputStream(),"UTF-8"))
                     writer.println(playerName)
                     runOnUiThread {
                         val room=newPage("متصل بالغرفة")
                         room.addView(text("تم الاتصال بالمستضيف. قائمة اللاعبين:",15f,cream,false))
                         room.addView(text("بانتظار القائمة...",16f,gold,true).apply { tag="client_roster"; setPadding(0,dp(24),0,dp(24)) })
-                        addButton(room,"قطع الاتصال",false) { try { socket.close() } catch (_:Exception) { }; showHome() }
+                        addButton(room,"قطع الاتصال",false) { lanClientWriter = null; try { socket.close() } catch (_:Exception) { }; showHome() }
                     }
                     while(!socket.isClosed) {
                         val line=reader.readLine() ?: break
